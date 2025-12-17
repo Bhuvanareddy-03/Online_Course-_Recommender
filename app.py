@@ -2,8 +2,6 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-import seaborn as sns
-import matplotlib.pyplot as plt
 from sklearn.preprocessing import MinMaxScaler
 from sklearn.metrics.pairwise import cosine_similarity
 from sklearn.metrics import mean_squared_error, mean_absolute_error
@@ -33,49 +31,12 @@ df[['course_duration_hours', 'course_price', 'feedback_score']] = scaler.fit_tra
     df[['course_duration_hours', 'course_price', 'feedback_score']]
 )
 
-# --- Visualizations ---
-st.subheader("Exploratory Data Analysis")
-
-col1, col2 = st.columns(2)
-with col1:
-    fig, ax = plt.subplots(figsize=(6,4))
-    sns.histplot(df['rating'], bins=10, kde=True, color="purple", ax=ax)
-    ax.set_title("Distribution of Course Ratings")
-    st.pyplot(fig)
-
-with col2:
-    fig, ax = plt.subplots(figsize=(6,4))
-    sns.countplot(x='difficulty_level', data=df, palette="viridis", ax=ax)
-    ax.set_title("Course Counts by Difficulty Level")
-    st.pyplot(fig)
-
-col3, col4 = st.columns(2)
-with col3:
-    cert_counts = df['certification_offered'].value_counts()
-    fig, ax = plt.subplots(figsize=(6,6))
-    ax.pie(cert_counts, labels=['Yes','No'], autopct='%1.1f%%', colors=['skyblue','lightcoral'])
-    ax.set_title("Certification Offered Distribution")
-    st.pyplot(fig)
-
-with col4:
-    avg_feedback = df.groupby('instructor')['feedback_score'].mean().sort_values(ascending=False)
-    fig, ax = plt.subplots(figsize=(8,4))
-    sns.barplot(x=avg_feedback.index, y=avg_feedback.values, palette="coolwarm", ax=ax)
-    ax.set_title("Average Feedback Score per Instructor")
-    ax.set_xticklabels(ax.get_xticklabels(), rotation=45, ha='right')
-    st.pyplot(fig)
-
 # --- Content-based similarity ---
 numeric_cols = ['difficulty_level','course_duration_hours','certification_offered',
                 'study_material_available','course_price','feedback_score']
 course_features = df.groupby('course_id')[numeric_cols].mean()
 course_sim = cosine_similarity(course_features)
 course_sim_df = pd.DataFrame(course_sim, index=course_features.index, columns=course_features.index)
-
-st.subheader("Course Similarity Heatmap")
-fig, ax = plt.subplots(figsize=(8,6))
-sns.heatmap(course_sim_df, cmap="YlGnBu", ax=ax)
-st.pyplot(fig)
 
 # --- Collaborative filtering baseline ---
 course_avg = df.groupby('course_id')['rating'].mean()
@@ -106,27 +67,6 @@ reg_mae = mean_absolute_error(y_test,y_pred)
 st.subheader("Regression Model Performance")
 st.write(f"**RMSE:** {reg_rmse:.3f}, **MAE:** {reg_mae:.3f}")
 
-# --- Performance comparison ---
-models = ["Collaborative","Content-Based","Regression"]
-rmse_values = [
-    np.sqrt(mean_squared_error(df['rating'], df['collab_pred'])),
-    np.sqrt(mean_squared_error(df['rating'], df['content_pred'])),
-    reg_rmse
-]
-mae_values = [
-    mean_absolute_error(df['rating'], df['collab_pred']),
-    mean_absolute_error(df['rating'], df['content_pred']),
-    reg_mae
-]
-
-fig, ax = plt.subplots(figsize=(8,5))
-x = np.arange(len(models)); width=0.35
-ax.bar(x-width/2, rmse_values, width, label='RMSE', color='skyblue')
-ax.bar(x+width/2, mae_values, width, label='MAE', color='salmon')
-ax.set_xticks(x); ax.set_xticklabels(models); ax.legend()
-ax.set_title("Model Performance Comparison")
-st.pyplot(fig)
-
 # --- Recommendation function ---
 def recommend_with_regression(user_id, top_n=5):
     rated = df[df['user_id']==user_id]['course_id'].tolist()
@@ -137,17 +77,13 @@ def recommend_with_regression(user_id, top_n=5):
         ['course_name','instructor','difficulty_level','predicted_rating']
     ]
 
+# --- Sidebar controls ---
 st.sidebar.header("Recommendation Settings")
 user_id = st.sidebar.number_input("User ID", min_value=int(df['user_id'].min()), 
                                   max_value=int(df['user_id'].max()), value=int(df['user_id'].min()))
 top_n = st.sidebar.slider("Top N Recommendations",3,10,5)
 
+# --- Show recommendations ---
 recs = recommend_with_regression(user_id, top_n)
 st.subheader(f"Top {top_n} Recommendations for User {user_id}")
 st.dataframe(recs)
-
-fig, ax = plt.subplots(figsize=(8,4))
-sns.barplot(x=recs['course_name'], y=recs['predicted_rating'], palette="viridis", ax=ax)
-ax.set_title(f"Top {top_n} Recommended Courses for User {user_id}")
-ax.set_xticklabels(ax.get_xticklabels(), rotation=45, ha='right')
-st.pyplot(fig)
