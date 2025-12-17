@@ -1,168 +1,79 @@
-import streamlit as st
-import pandas as pd
-import numpy as np
-import matplotlib.pyplot as plt
-import seaborn as sns
+# streamlit_app_min.py
+import streamlit as st, pandas as pd, numpy as np, seaborn as sns, matplotlib.pyplot as plt
 from sklearn.preprocessing import MinMaxScaler
 from sklearn.metrics.pairwise import cosine_similarity
 from sklearn.linear_model import LinearRegression
 from sklearn.metrics import mean_squared_error, mean_absolute_error
 from sklearn.model_selection import train_test_split
 
-st.title("📚 Course Recommendation System (User–User & Item–Item)")
+st.set_page_config(page_title="Course Recommender", layout="wide")
+st.title("Course Recommendation System")
 
-# ===========================
-# File Upload
-# ===========================
-uploaded_file = st.sidebar.file_uploader("Upload dataset (.xlsx)", type=["xlsx"])
-if uploaded_file is None:
-    st.info("⬆️ Please upload your dataset to continue.")
-    st.stop()
-
-df = pd.read_excel(uploaded_file)
-
-# ===========================
-# Preprocessing
-# ===========================
-df['certification_offered'] = df['certification_offered'].map({'Yes': 1, 'No': 0})
-df['difficulty_level'] = df['difficulty_level'].map({'Beginner': 1, 'Intermediate': 2, 'Advanced': 3})
-df['study_material_available'] = df['study_material_available'].map({'Yes': 1, 'No': 0})
-
+# --- Load & preprocess ---
+df = pd.read_excel("online_course_recommendation_v2.xlsx")
+df['certification_offered'] = df['certification_offered'].map({'Yes':1,'No':0})
+df['difficulty_level'] = df['difficulty_level'].map({'Beginner':1,'Intermediate':2,'Advanced':3})
+df['study_material_available'] = df['study_material_available'].map({'Yes':1,'No':0})
 scaler = MinMaxScaler()
-df[['course_duration_hours', 'course_price', 'feedback_score']] = scaler.fit_transform(
-    df[['course_duration_hours', 'course_price', 'feedback_score']]
+df[['course_duration_hours','course_price','feedback_score']] = scaler.fit_transform(
+    df[['course_duration_hours','course_price','feedback_score']]
 )
 
-ratings = df.pivot_table(index='user_id', columns='course_id', values='rating')
+# --- Feature matrices ---
+user_course = df.pivot_table(index='user_id', columns='course_id', values='rating')
+item_sim = pd.DataFrame(cosine_similarity(user_course.T.fillna(0)), 
+                        index=user_course.columns, columns=user_course.columns)
+user_sim = pd.DataFrame(cosine_similarity(user_course.fillna(0)), 
+                        index=user_course.index, columns=user_course.index)
 
-# ===========================
-# Similarities
-# ===========================
-user_sim = pd.DataFrame(cosine_similarity(ratings.fillna(0)),
-                        index=ratings.index, columns=ratings.index)
-item_sim = pd.DataFrame(cosine_similarity(ratings.fillna(0).T),
-                        index=ratings.columns, columns=ratings.columns)
+# --- Baseline preds ---
+course_avg = df.groupby('course_id')['rating'].mean()
+df['collab_pred'] = df['course_id'].map(course_avg)
+course_features = df.groupby('course_id')[['difficulty_level','course_duration_hours',
+                                           'certification_offered','study_material_available',
+                                           'course_price','feedback_score']].mean()
+course_sim = pd.DataFrame(cosine_similarity(course_features.fillna(0)), 
+                          index=course_features.index, columns=course_features.index)
+df['content_pred'] = df['course_id'].map(course_sim.mean())
 
-# ===========================
-# Visualizations
-# ===========================
-st.subheader("📊 Dataset Overview")
-
-fig1, ax1 = plt.subplots(figsize=(8,5))
-sns.histplot(df['rating'], bins=10, kde=True, color="purple", ax=ax1)
-ax1.set_title("Distribution of Course Ratings")
-st.pyplot(fig1)
-
-fig2, ax2 = plt.subplots(figsize=(6,4))
-sns.countplot(x='difficulty_level', data=df, palette="viridis", ax=ax2)
-ax2.set_title("Course Counts by Difficulty Level")
-st.pyplot(fig2)
-
-cert_counts = df['certification_offered'].value_counts()
-fig3, ax3 = plt.subplots(figsize=(6,6))
-ax3.pie(cert_counts, labels=['Yes','No'], autopct='%1.1f%%', colors=['skyblue','lightcoral'])
-ax3.set_title("Certification Offered Distribution")
-st.pyplot(fig3)
-
-# Sample heatmaps to avoid crashes
-st.subheader("🔎 Sampled Similarity Heatmaps")
-
-fig4, ax4 = plt.subplots(figsize=(8,6))
-sns.heatmap(user_sim.iloc[:20,:20], cmap="coolwarm", ax=ax4)
-ax4.set_title("User–User Similarity (Sampled)")
-st.pyplot(fig4)
-
-fig5, ax5 = plt.subplots(figsize=(8,6))
-sns.heatmap(item_sim.iloc[:20,:20], cmap="YlGnBu", ax=ax5)
-ax5.set_title("Item–Item Similarity (Sampled)")
-st.pyplot(fig5)
-
-# ===========================
-# Predictors
-# ===========================
-def user_cf(user, course):
-    sims = user_sim[user].drop(user).sort_values(ascending=False)
-    raters = ratings.loc[sims.index, course].dropna()
-    return raters.mean() if not raters.empty else np.nan
-
-def item_cf(user, course):
-    rated = ratings.loc[user].dropna()
-    if rated.empty: return np.nan
-    sims = item_sim.loc[course, rated.index]
-    return (rated.values * sims.values).sum() / sims.sum()
-
-# ===========================
-# Hybrid Regression
-# ===========================
-df['user_cf'] = [user_cf(u,c) for u,c in zip(df['user_id'], df['course_id'])]
-df['item_cf'] = [item_cf(u,c) for u,c in zip(df['user_id'], df['course_id'])]
-
-X = df[['user_cf','item_cf']].fillna(df['rating'].mean())
+# --- Hybrid regression ---
+X = df[['content_pred','collab_pred']].fillna(df['rating'].mean())
 y = df['rating']
+Xtr,Xte,ytr,yte = train_test_split(X,y,test_size=0.2,random_state=42)
+reg = LinearRegression().fit(Xtr,ytr)
 
-X_train,X_test,y_train,y_test = train_test_split(X,y,test_size=0.2,random_state=42)
-model = LinearRegression().fit(X_train,y_train)
-preds = model.predict(X_test)
+# --- Recommend functions ---
+def item_item(user, n=5):
+    rated = user_course.loc[user].dropna()
+    scores={}
+    for c,r in rated.items():
+        for sc,sim in item_sim[c].drop(c).nlargest(10).items():
+            if pd.isna(user_course.loc[user,sc]):
+                scores[sc]=scores.get(sc,0)+sim*r
+    recs = pd.DataFrame(scores.items(),columns=['course_id','score']).nlargest(n,'score')
+    return df[df['course_id'].isin(recs.course_id)].drop_duplicates('course_id')[['course_name','instructor']]
 
-reg_rmse = np.sqrt(mean_squared_error(y_test,preds))
-reg_mae = mean_absolute_error(y_test,preds)
+def user_user(user,n=5):
+    sims=user_sim[user].drop(user).nlargest(5)
+    scores={}
+    for u,s in sims.items():
+        for c,r in user_course.loc[u].dropna().items():
+            if pd.isna(user_course.loc[user,c]):
+                scores[c]=scores.get(c,0)+s*r
+    recs=pd.DataFrame(scores.items(),columns=['course_id','score']).nlargest(n,'score')
+    return df[df['course_id'].isin(recs.course_id)].drop_duplicates('course_id')[['course_name','instructor']]
 
-# ===========================
-# Sidebar Controls
-# ===========================
-st.sidebar.header("Recommendation Settings")
-user_id = st.sidebar.selectbox("Select User ID", df['user_id'].unique())
-top_n = st.sidebar.slider("Number of Recommendations", 3, 10, 5)
+def hybrid(user,n=5):
+    rated=df[df.user_id==user].course_id
+    unrated=df[~df.course_id.isin(rated)].drop_duplicates('course_id')
+    Xun=unrated[['content_pred','collab_pred']].fillna(y.mean())
+    unrated['pred']=reg.predict(Xun)
+    return unrated.nlargest(n,'pred')[['course_name','instructor','pred']]
 
-# ===========================
-# Recommendations
-# ===========================
-def recommend(user, top_n=5):
-    courses = ratings.columns
-    scores = []
-    for c in courses:
-        if pd.notna(ratings.loc[user,c]): continue
-        f = pd.DataFrame([[user_cf(user,c), item_cf(user,c)]],
-                         columns=['user_cf','item_cf']).fillna(0)
-        score = model.predict(f)[0]
-        scores.append((c,score))
-    recs = pd.DataFrame(scores, columns=['course_id','pred']).sort_values('pred',ascending=False).head(top_n)
-    return df.drop_duplicates('course_id').set_index('course_id').loc[recs['course_id'],['course_name','instructor']].assign(pred=recs['pred'].values)
-
-recs = recommend(user_id, top_n)
-
-st.subheader(f"🎯 Top {top_n} Recommendations for User {user_id}")
-st.dataframe(recs)
-
-fig6, ax6 = plt.subplots(figsize=(8,5))
-sns.barplot(x=recs['course_name'], y=recs['pred'], palette="viridis", ax=ax6)
-ax6.set_title(f"Top {top_n} Recommended Courses for User {user_id}")
-ax6.set_xticklabels(ax6.get_xticklabels(), rotation=45, ha='right')
-ax6.set_ylabel("Predicted Rating")
-st.pyplot(fig6)
-
-# ===========================
-# Performance Comparison
-# ===========================
-st.subheader("📈 Model Performance Comparison")
-results = []
-for col,label in [('user_cf','User CF'),('item_cf','Item CF')]:
-    valid = df[~df[col].isna()]
-    rmse = np.sqrt(mean_squared_error(valid['rating'], valid[col]))
-    mae = mean_absolute_error(valid['rating'], valid[col])
-    results.append((label, rmse, mae))
-results.append(('Hybrid', reg_rmse, reg_mae))
-res_df = pd.DataFrame(results, columns=['Model','RMSE','MAE'])
-st.dataframe(res_df)
-
-fig7, ax7 = plt.subplots(figsize=(10,6))
-x = np.arange(len(res_df))
-width = 0.35
-ax7.bar(x - width/2, res_df['RMSE'], width, label='RMSE', color='skyblue')
-ax7.bar(x + width/2, res_df['MAE'], width, label='MAE', color='salmon')
-ax7.set_ylabel('Error')
-ax7.set_title('Model Performance Comparison')
-ax7.set_xticks(x)
-ax7.set_xticklabels(res_df['Model'])
-ax7.legend()
-st.pyplot(fig7)
+# --- UI ---
+user=st.sidebar.selectbox("User",df.user_id.unique())
+algo=st.sidebar.radio("Algorithm",["Item–Item","User–User","Hybrid"])
+if algo=="Item–Item": recs=item_item(user)
+elif algo=="User–User": recs=user_user(user)
+else: recs=hybrid(user)
+st.write(recs)
