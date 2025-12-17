@@ -9,7 +9,7 @@ from sklearn.linear_model import LinearRegression
 from sklearn.metrics import mean_squared_error, mean_absolute_error
 from sklearn.model_selection import train_test_split
 
-st.title("📚 Course Recommendation System")
+st.title("📚 Course Recommendation System (User–User & Item–Item)")
 
 # ===========================
 # File Upload
