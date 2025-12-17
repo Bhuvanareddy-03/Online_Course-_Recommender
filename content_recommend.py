@@ -4,67 +4,11 @@ import numpy as np
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
 
-# ----------------------------------------------------------
-# SIDEBAR THEME SWITCHER
-# ----------------------------------------------------------
-st.sidebar.header("🎨 Theme Customization")
 
-theme_choice = st.sidebar.selectbox(
-    "Choose Background Theme",
-    ["Light Blue", "Dark Mode", "Gradient Purple", "Mint Green"]
-)
 
-# ----------------------------------------------------------
-# DYNAMIC BACKGROUND CSS
-# ----------------------------------------------------------
-if theme_choice == "Light Blue":
-    page_bg = """
-    <style>
-        .stApp { background-color: #e7f3ff !important; }
-        body { background-color: #e7f3ff !important; }
-        .css-1d391kg { background-color: #d9ecff !important; }
-    </style>
-    """
 
-elif theme_choice == "Dark Mode":
-    page_bg = """
-    <style>
-        .stApp { background-color: #1e1e1e !important; color: white !important; }
-        body { background-color: #1e1e1e !important; color: white !important; }
-        .css-1d391kg { background-color: #111 !important; }
-        h1, h2, h3, h4, h5, h6, p, label, .stMetric { color: white !important; }
-    </style>
-    """
-
-elif theme_choice == "Gradient Purple":
-    page_bg = """
-    <style>
-        .stApp {
-            background: linear-gradient(to bottom right, #8e2de2, #4a00e0) !important;
-            color: white !important;
-        }
-        body {
-            background: linear-gradient(to bottom right, #8e2de2, #4a00e0) !important;
-        }
-        .css-1d391kg { background-color: #3d009b !important; }
-        h1, h2, h3, h4, h5, h6, p, label { color: white !important; }
-    </style>
-    """
-
-elif theme_choice == "Mint Green":
-    page_bg = """
-    <style>
-        .stApp { background-color: #d7fff1 !important; }
-        body { background-color: #d7fff1 !important; }
-        .css-1d391kg { background-color: #b8f7e6 !important; }
-    </style>
-    """
-
-st.markdown(page_bg, unsafe_allow_html=True)
-
-# ----------------------------------------------------------
 # RECOMMENDATION FUNCTION (WITH SCORES)
-# ----------------------------------------------------------
+
 def content_based_recommendations(df2, course_name, top_n=10):
     if course_name not in df2['course_name'].values:
         return pd.DataFrame(), []
@@ -100,7 +44,7 @@ def content_based_recommendations(df2, course_name, top_n=10):
 # MAIN UI
 # ----------------------------------------------------------
 st.title("📘 Course Recommendation System")
-st.markdown("### Find similar courses using TF-IDF + Cosine Similarity + Evaluation Metrics")
+
 
 uploaded_file = st.file_uploader("Upload your dataset", type=["csv", "xlsx", "xls"])
 
@@ -152,3 +96,4 @@ if uploaded_file:
 
 else:
     st.info("Please upload a dataset.")
+
