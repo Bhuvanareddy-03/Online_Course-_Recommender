@@ -6,31 +6,37 @@ from sklearn.metrics.pairwise import cosine_similarity
 import warnings
 warnings.filterwarnings("ignore")
 
-# --------------------------------------------------
-# PAGE CONFIG (MUST BE FIRST STREAMLIT COMMAND)
-# --------------------------------------------------
-st.set_page_config(page_title="Course Recommender", layout="wide")
-st.title("Course Recommendation System")
+# ==================================================
+# PAGE CONFIG (FIRST STREAMLIT COMMAND)
+# ==================================================
+st.set_page_config(
+    page_title="Course Recommender",
+    page_icon="🎓",
+    layout="wide"
+)
 
-# --------------------------------------------------
+st.title("🎓 Personalized Course Recommendation System")
+
+# ==================================================
 # FILE UPLOAD
-# --------------------------------------------------
+# ==================================================
+st.sidebar.header("📂 Upload Dataset")
 uploaded_file = st.sidebar.file_uploader(
-    "📂 Upload Excel Dataset", type=["xlsx"]
+    "Upload Excel File (.xlsx)", type=["xlsx"]
 )
 
 if uploaded_file is None:
-    st.info("Upload an Excel file to start.")
+    st.info("Please upload an Excel file to continue.")
     st.stop()
 
-# --------------------------------------------------
+# ==================================================
 # LOAD DATA
-# --------------------------------------------------
+# ==================================================
 df = pd.read_excel(uploaded_file)
 
-# --------------------------------------------------
-# REQUIRED COLUMNS CHECK
-# --------------------------------------------------
+# ==================================================
+# REQUIRED COLUMN VALIDATION
+# ==================================================
 required_cols = [
     'user_id', 'course_id', 'course_name', 'instructor',
     'rating', 'difficulty_level', 'course_duration_hours',
@@ -38,14 +44,14 @@ required_cols = [
     'course_price', 'feedback_score'
 ]
 
-missing = [c for c in required_cols if c not in df.columns]
-if missing:
-    st.error(f"Missing columns: {missing}")
+missing_cols = [c for c in required_cols if c not in df.columns]
+if missing_cols:
+    st.error(f"❌ Missing required columns: {missing_cols}")
     st.stop()
 
-# --------------------------------------------------
-# CLEAN DATA
-# --------------------------------------------------
+# ==================================================
+# DATA CLEANING
+# ==================================================
 df = df.dropna(subset=['user_id', 'course_id', 'rating'])
 
 df['certification_offered'] = (
@@ -66,31 +72,38 @@ df['difficulty_level'] = (
 df = df.dropna()
 
 if df.empty:
-    st.error("Dataset is empty after cleaning.")
+    st.error("❌ Dataset is empty after cleaning.")
     st.stop()
 
-# --------------------------------------------------
+# ==================================================
 # SCALE NUMERIC FEATURES
-# --------------------------------------------------
+# ==================================================
 scaler = MinMaxScaler()
 num_cols = ['course_duration_hours', 'course_price', 'feedback_score']
 df[num_cols] = scaler.fit_transform(df[num_cols])
 
-# --------------------------------------------------
+# ==================================================
 # SIDEBAR CONTROLS
-# --------------------------------------------------
+# ==================================================
+st.sidebar.header("⚙️ Recommendation Settings")
+
 user_id = st.sidebar.selectbox(
-    "Select User ID", sorted(df['user_id'].unique())
+    "Select User ID",
+    sorted(df['user_id'].unique())
 )
-top_n = st.sidebar.slider("Top N Recommendations", 1, 10, 5)
-run_btn = st.sidebar.button("🔍 Recommend")
 
-# --------------------------------------------------
-# RUN RECOMMENDER (LAZY EXECUTION)
-# --------------------------------------------------
-if run_btn:
+top_n = st.sidebar.slider(
+    "Number of Recommendations", 1, 10, 5
+)
 
-    # ---- USER-COURSE MATRIX
+recommend_btn = st.sidebar.button("🔍 Recommend")
+
+# ==================================================
+# RUN RECOMMENDER (SAFE EXECUTION)
+# ==================================================
+if recommend_btn:
+
+    # ---------- USER-COURSE MATRIX ----------
     user_course = df.pivot_table(
         index='user_id',
         columns='course_id',
@@ -99,7 +112,7 @@ if run_btn:
     ).fillna(0)
 
     if user_course.shape[0] < 2 or user_course.shape[1] < 2:
-        st.error("Need at least 2 users and 2 courses for recommendations.")
+        st.warning("⚠️ Not enough users or courses for recommendations.")
         st.stop()
 
     user_sim = cosine_similarity(user_course)
@@ -109,7 +122,7 @@ if run_btn:
         columns=user_course.index
     )
 
-    # ---- COURSE SIMILARITY
+    # ---------- COURSE SIMILARITY ----------
     feature_cols = [
         'difficulty_level',
         'course_duration_hours',
@@ -122,7 +135,7 @@ if run_btn:
     course_features = df.groupby('course_id')[feature_cols].mean()
 
     if course_features.shape[0] < 2:
-        st.error("Not enough courses for similarity calculation.")
+        st.warning("⚠️ Not enough courses for content-based similarity.")
         st.stop()
 
     course_sim = cosine_similarity(course_features)
@@ -132,7 +145,7 @@ if run_btn:
         columns=course_features.index
     )
 
-    # ---- PREDICTION FUNCTIONS
+    # ---------- PREDICTION FUNCTIONS ----------
     def user_based(uid, cid, k=5):
         sims = user_sim_df.loc[uid].sort_values(ascending=False)[1:k+1]
         ratings = user_course.loc[sims.index, cid]
@@ -146,20 +159,37 @@ if run_btn:
         ratings = df[df['course_id'].isin(sims.index)]['rating']
         return ratings.mean() if not ratings.empty else np.nan
 
-    # ---- RECOMMENDATION
-    rated = df[df['user_id'] == user_id]['course_id'].unique()
-    candidates = df[~df['course_id'].isin(rated)].drop_duplicates('course_id')
+    # ---------- CANDIDATE COURSES ----------
+    rated_courses = df[df['user_id'] == user_id]['course_id'].unique()
+    candidates = df[~df['course_id'].isin(rated_courses)].drop_duplicates('course_id')
 
+    if candidates.empty:
+        st.warning("ℹ️ User has already rated all courses.")
+        st.stop()
+
+    # ---------- SCORE PREDICTIONS ----------
     scores = []
     for cid in candidates['course_id']:
-        scores.append(np.nanmean([user_based(user_id, cid), content_based(cid)]))
+        score = np.nanmean([user_based(user_id, cid), content_based(cid)])
+        scores.append(score)
 
+    candidates = candidates.copy()
     candidates['predicted_rating'] = scores
 
+    candidates = candidates.dropna(subset=['predicted_rating'])
+
+    if candidates.empty:
+        st.warning("⚠️ Not enough data to generate recommendations.")
+        st.stop()
+
+    # ---------- FINAL OUTPUT ----------
     result = candidates.sort_values(
         'predicted_rating', ascending=False
     ).head(top_n)[[
-        'course_name', 'instructor', 'difficulty_level', 'predicted_rating'
+        'course_name',
+        'instructor',
+        'difficulty_level',
+        'predicted_rating'
     ]]
 
     st.subheader(f"⭐ Recommendations for User {user_id}")
