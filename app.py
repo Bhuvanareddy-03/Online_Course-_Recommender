@@ -1,152 +1,86 @@
 import streamlit as st
 import pandas as pd
-import numpy as np
-from sklearn.preprocessing import MinMaxScaler
-from sklearn.metrics.pairwise import cosine_similarity
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.neighbors import NearestNeighbors
 
-# --------------------------------------------------
-# PAGE CONFIG
-# --------------------------------------------------
-st.set_page_config(
-    page_title="Course Recommender",
-    page_icon="🎓",
-    layout="wide"
+
+# Load Data
+@st.cache_data
+def load_data():
+    df = pd.read_excel("online_course_recommendation_v2 (1) (1).xlsx")
+    return df
+
+df = load_data()
+
+
+# Prepare Combined Features
+df['combined_features'] = (
+    df['course_name'].astype(str) + ' ' +
+    df['instructor'].astype(str) + ' ' +
+    df['difficulty_level'].astype(str)
 )
 
-st.title("Course Recommendation System")
+# Build TF-IDF & Nearest Neighbors Model
+vectorizer = TfidfVectorizer(stop_words='english')
+feature_matrix = vectorizer.fit_transform(df['combined_features'])
 
-# --------------------------------------------------
-# FILE UPLOAD
-# --------------------------------------------------
-uploaded_file = st.sidebar.file_uploader(
-    "📂 Upload Excel Dataset", type=["xlsx"]
-)
+model_knn = NearestNeighbors(metric='cosine', algorithm='brute', n_neighbors=10)
+model_knn.fit(feature_matrix)
 
-if uploaded_file is None:
-    st.info("Please upload an Excel file to continue.")
-    st.stop()
 
-# --------------------------------------------------
-# LOAD DATA
-# --------------------------------------------------
-df = pd.read_excel(uploaded_file)
+# Recommendation Function
+def recommend_courses(keyword, difficulty, engagement, n=5):
+    # Filter by difficulty
+    subset = df.copy()
+    if difficulty != "Any":
+        subset = subset[subset['difficulty_level'] == difficulty]
 
-# --------------------------------------------------
-# REQUIRED COLUMNS
-# --------------------------------------------------
-required_cols = [
-    'user_id', 'course_id', 'course_name', 'instructor',
-    'rating', 'difficulty_level', 'course_duration_hours',
-    'certification_offered', 'study_material_available',
-    'course_price', 'feedback_score'
-]
+    # Filter by engagement (based on time spent)
+    if engagement == "High":
+        subset = subset[subset['time_spent_hours'] > 60]
+    elif engagement == "Medium":
+        subset = subset[(subset['time_spent_hours'] >= 30) & (subset['time_spent_hours'] <= 60)]
+    elif engagement == "Low":
+        subset = subset[subset['time_spent_hours'] < 30]
 
-missing = [c for c in required_cols if c not in df.columns]
-if missing:
-    st.error(f"❌ Missing columns: {missing}")
-    st.stop()
-
-# --------------------------------------------------
-# CLEAN DATA
-# --------------------------------------------------
-df = df.dropna(subset=['user_id', 'course_id', 'rating'])
-
-df['difficulty_level'] = (
-    df['difficulty_level'].astype(str).str.lower().str.strip()
-    .map({'beginner': 1, 'intermediate': 2, 'advanced': 3})
-)
-
-df['certification_offered'] = (
-    df['certification_offered'].astype(str).str.lower().str.strip()
-    .map({'yes': 1, 'no': 0})
-)
-
-df['study_material_available'] = (
-    df['study_material_available'].astype(str).str.lower().str.strip()
-    .map({'yes': 1, 'no': 0})
-)
-
-df = df.dropna()
-
-if df.empty:
-    st.error("Dataset is empty after cleaning.")
-    st.stop()
-
-# --------------------------------------------------
-# SCALE NUMERIC FEATURES
-# --------------------------------------------------
-scaler = MinMaxScaler()
-num_cols = ['course_duration_hours', 'course_price', 'feedback_score']
-df[num_cols] = scaler.fit_transform(df[num_cols])
-
-# --------------------------------------------------
-# SIDEBAR CONTROLS
-# --------------------------------------------------
-st.sidebar.header("⚙️ Recommendation Settings")
-
-user_id = st.sidebar.selectbox(
-    "Select User ID", sorted(df['user_id'].unique())
-)
-
-top_n = st.sidebar.slider("Top N Recommendations", 1, 10, 5)
-run_btn = st.sidebar.button("🔍 Recommend")
-
-# --------------------------------------------------
-# RECOMMENDATION LOGIC
-# --------------------------------------------------
-if run_btn:
-
-    user_course = df.pivot_table(
-        index='user_id',
-        columns='course_id',
-        values='rating',
-        aggfunc='mean'
-    ).fillna(0)
-
-    if user_course.shape[0] < 2 or user_course.shape[1] < 2:
-        st.warning("Not enough users or courses for recommendations.")
-        st.stop()
-
-    user_sim = cosine_similarity(user_course)
-    user_sim_df = pd.DataFrame(
-        user_sim,
-        index=user_course.index,
-        columns=user_course.index
-    )
-
-    rated = df[df['user_id'] == user_id]['course_id'].unique()
-    candidates = df[~df['course_id'].isin(rated)].drop_duplicates('course_id')
-
-    if candidates.empty:
-        st.warning("User has already rated all courses.")
-        st.stop()
-
-    scores = []
-    for cid in candidates['course_id']:
-        similar_users = user_sim_df[user_id].sort_values(ascending=False)[1:6]
-        ratings = user_course.loc[similar_users.index, cid]
-        mask = ratings > 0
-
-        if mask.any():
-            score = np.average(ratings[mask], weights=similar_users[mask])
-        else:
-            score = df[df['course_id'] == cid]['rating'].mean()
-
-        scores.append(score)
-
-    candidates = candidates.copy()
-    candidates['predicted_rating'] = scores
-    candidates = candidates.dropna(subset=['predicted_rating'])
-
-    if candidates.empty:
-        st.warning("Not enough data to generate recommendations.")
-        st.stop()
-
-    result = candidates.sort_values(
-        'predicted_rating', ascending=False
-    ).head(top_n)[[
-        'course_name', 'instructor', 'difficulty_level', 'predicted_rating'
+    # Find matching course names
+    matches = df[df['course_name'].str.contains(keyword, case=False, na=False)]
+    if matches.empty:
+        return pd.DataFrame({'Message': [f"No matching courses found for '{keyword}'. Try another."]})
+    
+    # Get first matching course
+    idx = matches.index[0]
+    distances, indices = model_knn.kneighbors(feature_matrix[idx], n_neighbors=n+10)
+    recs = df.iloc[indices.flatten()[1:]][[
+        'course_name', 'instructor', 'difficulty_level', 'rating', 'feedback_score'
     ]]
+    recs['similarity_score'] = 1 - distances.flatten()[1:]
+    
+    # Remove duplicates for variety
+    recs = recs.drop_duplicates(subset=['course_name']).head(n)
 
-    st.subheader(f"⭐ Recommendations for User {user_id}")
-    st.dataframe(result, use_container_width=True)
+    # Combine content similarity with user filters
+    recs = recs[recs['difficulty_level'].isin(subset['difficulty_level'])]
+    return recs.reset_index(drop=True)
+
+# Streamlit App UI
+st.title(" Online Course Recommendation System")
+
+st.write("Find online courses based on your interests, difficulty level, and engagement preference.")
+
+# Inputs
+keyword = st.text_input("Enter a topic or keyword (e.g., Python, Data Science, Java):")
+difficulty = st.selectbox("Preferred Difficulty Level:", ["Any", "Beginner", "Intermediate", "Advanced"])
+engagement = st.selectbox("Your Engagement Level:", ["Any", "Low", "Medium", "High"])
+
+# Button
+if st.button(" Recommend Courses"):
+    if not keyword.strip():
+        st.warning("Please enter a keyword to get recommendations.")
+    else:
+        results = recommend_courses(keyword, difficulty, engagement)
+        st.subheader("Recommended Courses:")
+        st.dataframe(results)
+
+st.markdown("---")
+st.markdown("Built with using Streamlit and Scikit-Learn")
