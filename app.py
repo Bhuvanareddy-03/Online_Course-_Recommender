@@ -21,19 +21,22 @@ if uploaded is None:
 
 df = pd.read_excel(uploaded)
 
-# --- Preprocessing ---
-df['certification_offered'] = df['certification_offered'].map({'Yes': 1, 'No': 0})
-df['difficulty_level'] = df['difficulty_level'].map({'Beginner': 1, 'Intermediate': 2, 'Advanced': 3})
-df['study_material_available'] = df['study_material_available'].map({'Yes': 1, 'No': 0})
+# --- Preprocessing (defensive) ---
+if 'certification_offered' in df.columns:
+    df['certification_offered'] = df['certification_offered'].map({'Yes': 1, 'No': 0})
+if 'difficulty_level' in df.columns:
+    df['difficulty_level'] = df['difficulty_level'].map({'Beginner': 1, 'Intermediate': 2, 'Advanced': 3})
+if 'study_material_available' in df.columns:
+    df['study_material_available'] = df['study_material_available'].map({'Yes': 1, 'No': 0})
 
 scaler = MinMaxScaler()
-df[['course_duration_hours', 'course_price', 'feedback_score']] = scaler.fit_transform(
-    df[['course_duration_hours', 'course_price', 'feedback_score']]
-)
+for col in ['course_duration_hours','course_price','feedback_score']:
+    if col in df.columns:
+        df[[col]] = scaler.fit_transform(df[[col]])
 
 # --- Content-based similarity ---
-numeric_cols = ['difficulty_level','course_duration_hours','certification_offered',
-                'study_material_available','course_price','feedback_score']
+numeric_cols = [c for c in ['difficulty_level','course_duration_hours','certification_offered',
+                'study_material_available','course_price','feedback_score'] if c in df.columns]
 course_features = df.groupby('course_id')[numeric_cols].mean()
 course_sim = cosine_similarity(course_features.fillna(0))
 course_sim_df = pd.DataFrame(course_sim, index=course_features.index, columns=course_features.index)
@@ -47,17 +50,7 @@ user_sim = pd.DataFrame(cosine_similarity(user_course.fillna(0)),
 
 # --- Baseline predictions ---
 course_avg = df.groupby('course_id')['rating'].mean()
-content_preds = []
-for _, row in df.iterrows():
-    cid = row['course_id']
-    if cid in course_sim_df.index:
-        similar = course_sim_df[cid].sort_values(ascending=False)[1:6]
-        sim_ratings = df[df['course_id'].isin(similar.index)]['rating']
-        pred = sim_ratings.mean() if not sim_ratings.empty else np.nan
-    else:
-        pred = np.nan
-    content_preds.append(pred)
-df['content_pred'] = content_preds
+df['content_pred'] = df['course_id'].map(course_avg)  # simple baseline
 df['collab_pred'] = df['course_id'].map(course_avg)
 
 # --- Regression model ---
@@ -129,3 +122,4 @@ else:
 st.sidebar.subheader("Regression Model Performance")
 st.sidebar.write(f"RMSE: {reg_rmse:.3f}")
 st.sidebar.write(f"MAE: {reg_mae:.3f}")
+
